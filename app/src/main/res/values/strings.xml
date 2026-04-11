@@ -3,6 +3,5 @@
     <string name="closed_score">Closed Score: %1$d</string>
     <string name="open_score">Open   Score: %1$d</string>
     <string name="head_tilt_detected">HEAD TILT DETECTED</string>
-    <string name="app_name">DrowsinessDetector</string>
     <string name="geoapify_key">f23b556dd37340f4b07dec0a8d047813</string>
 </resources>
