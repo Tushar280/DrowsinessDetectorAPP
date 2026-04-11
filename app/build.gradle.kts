@@ -54,4 +54,7 @@ dependencies {
 
     // TensorFlow Lite
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    
+    // MapLibre Maps for Geoapify
+    implementation("org.maplibre.gl:android-sdk:11.6.0")
 }

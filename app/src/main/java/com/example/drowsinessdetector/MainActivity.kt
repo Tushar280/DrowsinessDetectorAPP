@@ -31,6 +31,11 @@ class MainActivity : AppCompatActivity() {
 
         navigationView.setNavigationItemSelectedListener { menuItem ->
             when (menuItem.itemId) {
+                R.id.nav_map -> {
+                    supportFragmentManager.beginTransaction()
+                        .replace(R.id.fragmentContainer, MapFragment())
+                        .commit()
+                }
                 R.id.nav_detection -> {
                     supportFragmentManager.beginTransaction()
                         .replace(R.id.fragmentContainer, DetectionFragment())
@@ -41,6 +46,11 @@ class MainActivity : AppCompatActivity() {
                         .replace(R.id.fragmentContainer, StatisticsFragment())
                         .commit()
                 }
+                R.id.nav_settings -> {
+                    supportFragmentManager.beginTransaction()
+                        .replace(R.id.fragmentContainer, SettingsFragment())
+                        .commit()
+                }
             }
             drawerLayout.closeDrawer(GravityCompat.START)
             true
@@ -48,9 +58,9 @@ class MainActivity : AppCompatActivity() {
 
         // Set Default Fragment
         if (savedInstanceState == null) {
-            navigationView.setCheckedItem(R.id.nav_detection)
+            navigationView.setCheckedItem(R.id.nav_map)
             supportFragmentManager.beginTransaction()
-                .replace(R.id.fragmentContainer, DetectionFragment())
+                .replace(R.id.fragmentContainer, MapFragment())
                 .commit()
         }
     }

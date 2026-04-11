@@ -29,8 +29,8 @@ import java.nio.channels.FileChannel
 class DetectionFragment : Fragment(R.layout.fragment_detection) {
 
     private lateinit var tflite: Interpreter
-    private var score = 0
-    private val threshold = 15
+    private var closedEyeStartTime: Long = 0L
+    private var threshold = 7
     private lateinit var toneGenerator: ToneGenerator
 
     private lateinit var statusText: TextView
@@ -42,6 +42,7 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
         FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
             .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
             .enableTracking()
             .build()
     )
@@ -65,6 +66,9 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
 
         toneGenerator = ToneGenerator(AudioManager.STREAM_ALARM, 100)
         tflite = Interpreter(loadModelFile(), Interpreter.Options())
+
+        val prefs = requireActivity().getSharedPreferences("DrowsinessPrefs", android.content.Context.MODE_PRIVATE)
+        threshold = prefs.getInt("threshold", 7)
 
         requestPermissionLauncher.launch(Manifest.permission.CAMERA)
     }
@@ -116,31 +120,37 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
                                     headTiltDetected = true
                                 }
 
-                                val box = face.boundingBox
-                                val left = box.left.coerceAtLeast(0)
-                                val top = box.top.coerceAtLeast(0)
-                                val width = box.width().coerceAtMost(rotatedBitmap.width - left)
-                                val height = box.height().coerceAtMost(rotatedBitmap.height - top)
+                                val leftEye = face.getLandmark(com.google.mlkit.vision.face.FaceLandmark.LEFT_EYE)?.position
+                                val rightEye = face.getLandmark(com.google.mlkit.vision.face.FaceLandmark.RIGHT_EYE)?.position
+                                val eyePos = leftEye ?: rightEye
 
-                                if (width > 0 && height > 0) {
-                                    val faceBitmap = Bitmap.createBitmap(rotatedBitmap, left, top, width, height)
-                                    val resized = Bitmap.createScaledBitmap(faceBitmap, 64, 64, true)
-                                    val inputBuffer = convertBitmapToGrayByteBuffer(resized)
-                                    val outputBuffer = Array(1) { FloatArray(3) }
-                                    
-                                    tflite.run(inputBuffer, outputBuffer)
-                                    
-                                    val scores = outputBuffer[0]
-                                    val closedScore = scores[0]
-                                    val openScore = scores[1]
-                                    
-                                    val currentCertainty = (kotlin.math.max(closedScore, openScore) * 100).toInt().coerceIn(0, 100)
-                                    
-                                    if (closedScore > openScore) {
-                                        isEyesClosed = true
-                                        certainty = currentCertainty
-                                    } else if (!isEyesClosed) {
-                                        certainty = currentCertainty
+                                if (eyePos != null) {
+                                    val eyeSize = (face.boundingBox.width() * 0.35f).toInt()
+                                    val left = (eyePos.x - eyeSize / 2).toInt().coerceAtLeast(0)
+                                    val top = (eyePos.y - eyeSize / 2).toInt().coerceAtLeast(0)
+                                    val width = eyeSize.coerceAtMost(rotatedBitmap.width - left)
+                                    val height = eyeSize.coerceAtMost(rotatedBitmap.height - top)
+
+                                    if (width > 0 && height > 0) {
+                                        val eyeBitmap = Bitmap.createBitmap(rotatedBitmap, left, top, width, height)
+                                        val resized = Bitmap.createScaledBitmap(eyeBitmap, 64, 64, true)
+                                        val inputBuffer = convertBitmapToGrayByteBuffer(resized)
+                                        val outputBuffer = Array(1) { FloatArray(3) }
+                                        
+                                        tflite.run(inputBuffer, outputBuffer)
+                                        
+                                        val scores = outputBuffer[0]
+                                        val openScore = scores[0]
+                                        val closedScore = scores[1]
+                                        
+                                        val currentCertainty = (kotlin.math.max(closedScore, openScore) * 100).toInt().coerceIn(0, 100)
+                                        
+                                        if (closedScore > openScore) {
+                                            isEyesClosed = true
+                                            certainty = currentCertainty
+                                        } else if (!isEyesClosed) {
+                                            certainty = currentCertainty
+                                        }
                                     }
                                 }
                             }
@@ -159,11 +169,12 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
 
     private fun updateUI(isEyesClosed: Boolean, headTiltDetected: Boolean, certainty: Int) {
         if (isEyesClosed) {
-            score++
+            if (closedEyeStartTime == 0L) {
+                closedEyeStartTime = System.currentTimeMillis()
+            }
         } else {
-            score--
+            closedEyeStartTime = 0L
         }
-        if (score < 0) score = 0
 
         activity?.runOnUiThread {
             if (isEyesClosed) {
@@ -178,7 +189,8 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
 
             alertText.text = if (headTiltDetected) "HEAD TILT DETECTED" else ""
 
-            if (score >= threshold) {
+            val elapsedSeconds = if (closedEyeStartTime > 0L) (System.currentTimeMillis() - closedEyeStartTime) / 1000 else 0
+            if (elapsedSeconds >= threshold) {
                 warningBorder.setBackgroundColor("#44FF9800".toColorInt())
                 toneGenerator.startTone(ToneGenerator.TONE_CDMA_HIGH_L, 500) 
             } else {
