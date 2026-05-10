@@ -25,6 +25,8 @@ import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class DetectionFragment : Fragment(R.layout.fragment_detection) {
 
@@ -32,6 +34,11 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
     private var closedEyeStartTime: Long = 0L
     private var threshold = 7
     private lateinit var toneGenerator: ToneGenerator
+    private lateinit var cameraExecutor: ExecutorService
+
+    private val inputBuffer = ByteBuffer.allocateDirect(1 * 64 * 64 * 1 * 4).apply {
+        order(ByteOrder.nativeOrder())
+    }
 
     private lateinit var statusText: TextView
     private lateinit var alertText: TextView
@@ -70,7 +77,13 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
         val prefs = requireActivity().getSharedPreferences("DrowsinessPrefs", android.content.Context.MODE_PRIVATE)
         threshold = prefs.getInt("threshold", 7)
 
-        requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+        cameraExecutor = Executors.newSingleThreadExecutor()
+
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            startCamera()
+        } else {
+            requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
     }
 
     @androidx.annotation.OptIn(ExperimentalGetImage::class)
@@ -86,7 +99,7 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
             val imageAnalyzer = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build().also {
-                    it.setAnalyzer(ContextCompat.getMainExecutor(requireContext())) { imageProxy ->
+                    it.setAnalyzer(cameraExecutor) { imageProxy ->
                         processImageProxy(imageProxy)
                     }
                 }
@@ -107,6 +120,7 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
                 .addOnSuccessListener { faces ->
                     var isEyesClosed = false
                     var headTiltDetected = false
+                    var yawningDetected = false
                     var certainty = 100
 
                     if (faces.isNotEmpty()) {
@@ -120,11 +134,29 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
                                     headTiltDetected = true
                                 }
 
+                                val mouthLeft = face.getLandmark(com.google.mlkit.vision.face.FaceLandmark.MOUTH_LEFT)?.position
+                                val mouthRight = face.getLandmark(com.google.mlkit.vision.face.FaceLandmark.MOUTH_RIGHT)?.position
+                                val mouthBottom = face.getLandmark(com.google.mlkit.vision.face.FaceLandmark.MOUTH_BOTTOM)?.position
+                                val noseBase = face.getLandmark(com.google.mlkit.vision.face.FaceLandmark.NOSE_BASE)?.position
+
+                                if (mouthLeft != null && mouthRight != null && mouthBottom != null && noseBase != null) {
+                                    val mouthWidth = kotlin.math.hypot((mouthRight.x - mouthLeft.x).toDouble(), (mouthRight.y - mouthLeft.y).toDouble())
+                                    val mouthHeight = kotlin.math.hypot((mouthBottom.x - noseBase.x).toDouble(), (mouthBottom.y - noseBase.y).toDouble())
+                                    
+                                    if (mouthHeight > mouthWidth * 0.8) {
+                                        yawningDetected = true
+                                    }
+                                }
+
                                 val leftEye = face.getLandmark(com.google.mlkit.vision.face.FaceLandmark.LEFT_EYE)?.position
                                 val rightEye = face.getLandmark(com.google.mlkit.vision.face.FaceLandmark.RIGHT_EYE)?.position
-                                val eyePos = leftEye ?: rightEye
+                                val eyes = listOfNotNull(leftEye, rightEye)
 
-                                if (eyePos != null) {
+                                var totalOpenScore = 0f
+                                var totalClosedScore = 0f
+                                var eyesChecked = 0
+
+                                for (eyePos in eyes) {
                                     val eyeSize = (face.boundingBox.width() * 0.35f).toInt()
                                     val left = (eyePos.x - eyeSize / 2).toInt().coerceAtLeast(0)
                                     val top = (eyePos.y - eyeSize / 2).toInt().coerceAtLeast(0)
@@ -134,23 +166,29 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
                                     if (width > 0 && height > 0) {
                                         val eyeBitmap = Bitmap.createBitmap(rotatedBitmap, left, top, width, height)
                                         val resized = Bitmap.createScaledBitmap(eyeBitmap, 64, 64, true)
-                                        val inputBuffer = convertBitmapToGrayByteBuffer(resized)
+                                        val buffer = convertBitmapToGrayByteBuffer(resized)
                                         val outputBuffer = Array(1) { FloatArray(3) }
                                         
-                                        tflite.run(inputBuffer, outputBuffer)
+                                        tflite.run(buffer, outputBuffer)
                                         
                                         val scores = outputBuffer[0]
-                                        val openScore = scores[0]
-                                        val closedScore = scores[1]
-                                        
-                                        val currentCertainty = (kotlin.math.max(closedScore, openScore) * 100).toInt().coerceIn(0, 100)
-                                        
-                                        if (closedScore > openScore) {
-                                            isEyesClosed = true
-                                            certainty = currentCertainty
-                                        } else if (!isEyesClosed) {
-                                            certainty = currentCertainty
-                                        }
+                                        totalOpenScore += scores[0]
+                                        totalClosedScore += scores[1]
+                                        eyesChecked++
+                                    }
+                                }
+
+                                if (eyesChecked > 0) {
+                                    val openScore = totalOpenScore / eyesChecked
+                                    val closedScore = totalClosedScore / eyesChecked
+                                    
+                                    val currentCertainty = (kotlin.math.max(closedScore, openScore) * 100).toInt().coerceIn(0, 100)
+                                    
+                                    if (closedScore > openScore) {
+                                        isEyesClosed = true
+                                        certainty = currentCertainty
+                                    } else if (!isEyesClosed) {
+                                        certainty = currentCertainty
                                     }
                                 }
                             }
@@ -159,7 +197,7 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
                         }
                     }
 
-                    updateUI(isEyesClosed, headTiltDetected, certainty)
+                    updateUI(isEyesClosed, headTiltDetected, yawningDetected, certainty)
                 }
                 .addOnCompleteListener { imageProxy.close() }
         } else {
@@ -167,7 +205,7 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
         }
     }
 
-    private fun updateUI(isEyesClosed: Boolean, headTiltDetected: Boolean, certainty: Int) {
+    private fun updateUI(isEyesClosed: Boolean, headTiltDetected: Boolean, yawningDetected: Boolean, certainty: Int) {
         if (isEyesClosed) {
             if (closedEyeStartTime == 0L) {
                 closedEyeStartTime = System.currentTimeMillis()
@@ -187,7 +225,10 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
                 statusText.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_bg))
             }
 
-            alertText.text = if (headTiltDetected) "HEAD TILT DETECTED" else ""
+            val alerts = mutableListOf<String>()
+            if (headTiltDetected) alerts.add("HEAD TILT DETECTED")
+            if (yawningDetected) alerts.add("YAWNING DETECTED")
+            alertText.text = alerts.joinToString("\n")
 
             val elapsedSeconds = if (closedEyeStartTime > 0L) (System.currentTimeMillis() - closedEyeStartTime) / 1000 else 0
             if (elapsedSeconds >= threshold) {
@@ -200,8 +241,7 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
     }
 
     private fun convertBitmapToGrayByteBuffer(bitmap: Bitmap): ByteBuffer {
-        val byteBuffer = ByteBuffer.allocateDirect(1 * 64 * 64 * 1 * 4)
-        byteBuffer.order(ByteOrder.nativeOrder())
+        inputBuffer.rewind()
         val intValues = IntArray(64 * 64)
         bitmap.getPixels(intValues, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
         var pixel = 0
@@ -212,10 +252,10 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
                 val g = (valInt shr 8 and 0xFF)
                 val b = (valInt and 0xFF)
                 val gray = (0.299f * r + 0.587f * g + 0.114f * b) / 255.0f
-                byteBuffer.putFloat(gray)
+                inputBuffer.putFloat(gray)
             }
         }
-        return byteBuffer
+        return inputBuffer
     }
 
     private fun loadModelFile(): ByteBuffer {
@@ -229,5 +269,6 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
         super.onDestroyView()
         if (::tflite.isInitialized) tflite.close()
         toneGenerator.release()
+        cameraExecutor.shutdown()
     }
 }

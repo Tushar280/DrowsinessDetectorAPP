@@ -22,6 +22,10 @@ import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
+import org.maplibre.android.maps.Style
+import org.maplibre.android.location.LocationComponentActivationOptions
+import org.maplibre.android.location.modes.CameraMode
+import org.maplibre.android.location.modes.RenderMode
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
@@ -44,6 +48,7 @@ class MapFragment : Fragment(R.layout.fragment_map) {
 
     private val locationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
         if (permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true || permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
+            mapLibreMap?.style?.let { enableLocationComponent(it) }
             fetchLocationSilent()
         }
     }
@@ -73,8 +78,13 @@ class MapFragment : Fragment(R.layout.fragment_map) {
                     .target(LatLng(40.7128, -74.0060)) 
                     .zoom(4.0)
                     .build()
-                    
-                fetchLocationSilent() // Immediately seek internal GPS context!
+                
+                if (ActivityCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                    enableLocationComponent(style)
+                    fetchLocationSilent()
+                } else {
+                    locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                }
             }
         }
         
@@ -105,9 +115,19 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         }
     }
 
+    @SuppressWarnings("MissingPermission")
+    private fun enableLocationComponent(loadedMapStyle: Style) {
+        val locationComponent = mapLibreMap?.locationComponent
+        locationComponent?.activateLocationComponent(
+            LocationComponentActivationOptions.builder(requireContext(), loadedMapStyle).build()
+        )
+        locationComponent?.isLocationComponentEnabled = true
+        locationComponent?.cameraMode = CameraMode.TRACKING
+        locationComponent?.renderMode = RenderMode.COMPASS
+    }
+
     private fun fetchLocationSilent() {
         if (ActivityCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
             return
         }
         val providers = locationManager.getProviders(true)
@@ -136,6 +156,12 @@ class MapFragment : Fragment(R.layout.fragment_map) {
 
             if (startLoc.isBlank() || startLoc.equals("Current Location", true)) {
                 if (currentLocation == null) fetchLocationSilent()
+                if (currentLocation == null) {
+                    val locComponent = mapLibreMap?.locationComponent
+                    if (locComponent != null && locComponent.isLocationComponentActivated && locComponent.lastKnownLocation != null) {
+                        currentLocation = locComponent.lastKnownLocation
+                    }
+                }
                 if (currentLocation == null) {
                     throw Exception("GPS Location Unavailable, please type a city!")
                 }
