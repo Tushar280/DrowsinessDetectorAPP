@@ -99,12 +99,28 @@ class MapFragment : Fragment(R.layout.fragment_map) {
                 return@setOnClickListener
             }
 
-            btnCalculate.text = "CALCULATING..."
-            btnCalculate.isEnabled = false
+            val uriStr = if (startLoc.isBlank() || startLoc.equals("Current Location", true)) {
+                "google.navigation:q=${java.net.URLEncoder.encode(endLoc, "UTF-8")}"
+            } else {
+                "http://maps.google.com/maps?saddr=${java.net.URLEncoder.encode(startLoc, "UTF-8")}&daddr=${java.net.URLEncoder.encode(endLoc, "UTF-8")}"
+            }
 
-            Thread {
-                performRoutingLogic(startLoc, endLoc)
-            }.start()
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(uriStr))
+            intent.setPackage("com.google.android.apps.maps")
+            try {
+                startActivity(intent)
+            } catch (e: Exception) {
+                val fallbackIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(uriStr))
+                try {
+                    startActivity(fallbackIntent)
+                } catch (ex: Exception) {
+                    Toast.makeText(requireContext(), "No map application found", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            btnStartTrip.text = "START TRIP"
+            btnStartTrip.setBackgroundColor(Color.parseColor("#4CAF50"))
+            btnStartTrip.setTextColor(Color.WHITE)
         }
         
         btnStartTrip.setOnClickListener {
