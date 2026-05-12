@@ -16,8 +16,8 @@
 
 You can directly install the application on your Android device by downloading the APK file below:
 
-<!-- USER: Replace the '#' below with the actual link to your APK (e.g., GitHub Releases, Google Drive, or Dropbox link) -->
-**[⬇️ Download Drowsiness Detector APK](#)**
+<!-- Download link directs users to the latest GitHub Release -->
+**[⬇️ Download Drowsiness Detector APK](https://github.com/Tushar280/DrowsinessDetectorAPP/releases/latest)**
 
 ---
 
