@@ -69,6 +69,10 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         btnCalculate = view.findViewById(R.id.btnCalculate)
         btnStartTrip = view.findViewById(R.id.btnStartTrip)
 
+        if (ActivityCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        }
+
         mapView.getMapAsync { map ->
             mapLibreMap = map
             val apiKey = getString(R.string.geoapify_key)
@@ -82,8 +86,6 @@ class MapFragment : Fragment(R.layout.fragment_map) {
                 if (ActivityCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
                     enableLocationComponent(style)
                     fetchLocationSilent()
-                } else {
-                    locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
                 }
             }
         }
@@ -130,21 +132,47 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         if (ActivityCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             return
         }
-        val providers = locationManager.getProviders(true)
-        var bestLocation: Location? = null
-        for (provider in providers) {
-            val l = locationManager.getLastKnownLocation(provider) ?: continue
-            if (bestLocation == null || l.accuracy < bestLocation.accuracy) {
-                bestLocation = l
-            }
+        
+        val locComponent = mapLibreMap?.locationComponent
+        if (locComponent != null && locComponent.isLocationComponentActivated) {
+            currentLocation = locComponent.lastKnownLocation
         }
-        currentLocation = bestLocation
+        
+        if (currentLocation == null) {
+            val providers = locationManager.getProviders(true)
+            var bestLocation: Location? = null
+            for (provider in providers) {
+                val l = locationManager.getLastKnownLocation(provider) ?: continue
+                if (bestLocation == null || l.accuracy < bestLocation.accuracy) {
+                    bestLocation = l
+                }
+            }
+            if (bestLocation != null) currentLocation = bestLocation
+        }
+
         if (currentLocation != null && mapLibreMap != null) {
             activity?.runOnUiThread {
                 try {
-                    mapLibreMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(currentLocation!!.latitude, currentLocation!!.longitude), 12.0))
+                    mapLibreMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(currentLocation!!.latitude, currentLocation!!.longitude), 15.0))
                 } catch(e: Exception) {}
             }
+        } else {
+            try {
+                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1f, object : android.location.LocationListener {
+                    override fun onLocationChanged(location: Location) {
+                        currentLocation = location
+                        activity?.runOnUiThread {
+                            try {
+                                mapLibreMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(location.latitude, location.longitude), 15.0))
+                            } catch(e: Exception) {}
+                        }
+                        locationManager.removeUpdates(this)
+                    }
+                    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+                    override fun onProviderEnabled(provider: String) {}
+                    override fun onProviderDisabled(provider: String) {}
+                })
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 

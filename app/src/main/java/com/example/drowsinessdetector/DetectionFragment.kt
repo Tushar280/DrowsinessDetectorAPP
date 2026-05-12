@@ -125,12 +125,11 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
 
                     if (faces.isNotEmpty()) {
                         try {
-                            val bitmap = imageProxy.toBitmap()
-                            val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-                            val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                            val rotatedBitmap = imageProxy.toBitmap()
 
                             for (face in faces) {
-                                if (kotlin.math.abs(face.headEulerAngleZ) > 20) {
+                                val angle = kotlin.math.abs(face.headEulerAngleZ)
+                                if ((angle > 20f && angle < 70f) || (angle > 110f && angle < 160f)) {
                                     headTiltDetected = true
                                 }
 
@@ -143,7 +142,7 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
                                     val mouthWidth = kotlin.math.hypot((mouthRight.x - mouthLeft.x).toDouble(), (mouthRight.y - mouthLeft.y).toDouble())
                                     val mouthHeight = kotlin.math.hypot((mouthBottom.x - noseBase.x).toDouble(), (mouthBottom.y - noseBase.y).toDouble())
                                     
-                                    if (mouthHeight > mouthWidth * 0.8) {
+                                    if (mouthHeight > mouthWidth * 1.3) {
                                         yawningDetected = true
                                     }
                                 }
@@ -157,7 +156,7 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
                                 var eyesChecked = 0
 
                                 for (eyePos in eyes) {
-                                    val eyeSize = (face.boundingBox.width() * 0.35f).toInt()
+                                    val eyeSize = (face.boundingBox.width() * 0.30f).toInt()
                                     val left = (eyePos.x - eyeSize / 2).toInt().coerceAtLeast(0)
                                     val top = (eyePos.y - eyeSize / 2).toInt().coerceAtLeast(0)
                                     val width = eyeSize.coerceAtMost(rotatedBitmap.width - left)
@@ -165,7 +164,10 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
 
                                     if (width > 0 && height > 0) {
                                         val eyeBitmap = Bitmap.createBitmap(rotatedBitmap, left, top, width, height)
-                                        val resized = Bitmap.createScaledBitmap(eyeBitmap, 64, 64, true)
+                                        val eyeMatrix = Matrix().apply { postRotate(-face.headEulerAngleZ) }
+                                        val alignedEye = Bitmap.createBitmap(eyeBitmap, 0, 0, eyeBitmap.width, eyeBitmap.height, eyeMatrix, true)
+                                        
+                                        val resized = Bitmap.createScaledBitmap(alignedEye, 64, 64, true)
                                         val buffer = convertBitmapToGrayByteBuffer(resized)
                                         val outputBuffer = Array(1) { FloatArray(3) }
                                         
@@ -215,26 +217,29 @@ class DetectionFragment : Fragment(R.layout.fragment_detection) {
         }
 
         activity?.runOnUiThread {
-            if (isEyesClosed) {
-                statusText.text = "Eyes Closed $certainty%"
-                statusText.setTextColor(ContextCompat.getColor(requireContext(), R.color.red_text))
-                statusText.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.red_bg))
-            } else {
-                statusText.text = "Eyes Open $certainty%"
-                statusText.setTextColor(ContextCompat.getColor(requireContext(), R.color.green_text))
-                statusText.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_bg))
-            }
-
             val alerts = mutableListOf<String>()
             if (headTiltDetected) alerts.add("HEAD TILT DETECTED")
             if (yawningDetected) alerts.add("YAWNING DETECTED")
             alertText.text = alerts.joinToString("\n")
 
             val elapsedSeconds = if (closedEyeStartTime > 0L) (System.currentTimeMillis() - closedEyeStartTime) / 1000 else 0
+            
             if (elapsedSeconds >= threshold) {
+                statusText.text = "Alarm Ringing"
+                statusText.setTextColor(ContextCompat.getColor(requireContext(), R.color.red_text))
+                statusText.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.red_bg))
                 warningBorder.setBackgroundColor("#44FF9800".toColorInt())
                 toneGenerator.startTone(ToneGenerator.TONE_CDMA_HIGH_L, 500) 
             } else {
+                if (isEyesClosed) {
+                    statusText.text = "Eyes Closed"
+                    statusText.setTextColor(ContextCompat.getColor(requireContext(), R.color.red_text))
+                    statusText.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.red_bg))
+                } else {
+                    statusText.text = "Eyes Open"
+                    statusText.setTextColor(ContextCompat.getColor(requireContext(), R.color.green_text))
+                    statusText.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_bg))
+                }
                 warningBorder.setBackgroundColor(Color.TRANSPARENT)
             }
         }
